@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>우주 스탑워치</title>
+<style>
+  :root { --fg:#e8ecff; --muted:#8e97c4; --cyan:#67e8f9; --violet:#a78bfa; --amber:#fbbf24; --go:#4ade80; --stop:#fb7185; --glass:rgba(20,24,56,.55); --line:rgba(150,160,255,.18); }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; }
+  body {
+    min-height:100vh; color:var(--fg); overflow-x:hidden;
+    font-family:'Segoe UI','Malgun Gothic',sans-serif;
+    background:
+      radial-gradient(ellipse at 20% 15%, rgba(124,58,237,.28), transparent 55%),
+      radial-gradient(ellipse at 85% 80%, rgba(14,165,233,.22), transparent 55%),
+      radial-gradient(ellipse at 50% 50%, #0b0e24, #04050f 80%);
+    background-attachment:fixed;
+  }
+  #space { position:fixed; inset:0; width:100%; height:100%; z-index:0; }
+  main { position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px 16px; gap:16px; }
+
+  h1 { margin:0; font-size:13px; font-weight:600; letter-spacing:.5em; color:var(--muted); text-indent:.5em; }
+  .status { font-size:13px; letter-spacing:.15em; color:var(--cyan); height:18px; text-align:center; }
+
+  .dial { position:relative; width:min(92vw,400px); aspect-ratio:1; }
+  .dial svg { width:100%; height:100%; overflow:visible; }
+  .readout { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; }
+  .time { font-family:'Consolas','Courier New',monospace; font-size:clamp(34px,10.5vw,52px); font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums; text-shadow:0 0 18px rgba(103,232,249,.7), 0 2px 6px #000; }
+  .time small { font-size:.55em; color:var(--cyan); }
+  .orbits { margin-top:4px; font-size:12px; letter-spacing:.2em; color:var(--muted); text-shadow:0 1px 4px #000; }
+
+  .planet-bands { animation:spin 40s linear infinite; transform-origin:200px 200px; animation-play-state:paused; }
+  body.running .planet-bands { animation-play-state:running; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .mission { width:min(92vw,400px); }
+  .track { position:relative; height:34px; border-radius:17px; background:var(--glass); border:1px solid var(--line); backdrop-filter:blur(8px); overflow:hidden; }
+  .track .fill { position:absolute; left:0; top:0; bottom:0; width:0; background:linear-gradient(90deg, transparent, rgba(251,191,36,.35)); }
+  .track .rocket { position:absolute; top:5px; left:0; width:38px; height:24px; }
+  .track .labels { position:absolute; inset:0; display:flex; justify-content:space-between; align-items:center; padding:0 14px; font-size:11px; color:var(--muted); letter-spacing:.1em; }
+  .flame { transform-origin:6px 12px; animation:flame .12s infinite alternate; }
+  @keyframes flame { to { transform:scaleX(.55); opacity:.7; } }
+  body:not(.running) .flame { display:none; }
+
+  .btns { display:flex; gap:12px; width:min(92vw,400px); }
+  button {
+    flex:1; padding:14px 0; font-size:16px; font-weight:700; letter-spacing:.08em; cursor:pointer; color:var(--fg);
+    background:var(--glass); border:1px solid var(--line); border-radius:999px; backdrop-filter:blur(8px);
+    transition:transform .08s, box-shadow .2s, opacity .2s;
+  }
+  button:hover:not(:disabled) { box-shadow:0 0 18px rgba(167,139,250,.45); }
+  button:active:not(:disabled) { transform:scale(.96); }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  #toggle { background:linear-gradient(135deg,#22c55e,#06b6d4); color:#04121a; border:none; box-shadow:0 0 22px rgba(34,211,238,.4); }
+  body.running #toggle { background:linear-gradient(135deg,#fb7185,#f59e0b); box-shadow:0 0 22px rgba(251,113,133,.45); }
+
+  .dial.pulse::after { content:''; position:absolute; inset:-4%; border-radius:50%; border:2px solid rgba(150,235,255,.9); animation:ring .9s ease-out forwards; pointer-events:none; }
+  @keyframes ring { from { transform:scale(.8); opacity:1; } to { transform:scale(1.25); opacity:0; } }
+  .hint { font-size:12px; color:var(--muted); }
+  ol { list-style:none; margin:0; padding:0; width:min(92vw,400px); max-height:200px; overflow-y:auto; border-radius:16px; background:var(--glass); backdrop-filter:blur(8px); }
+  ol:empty { display:none; }
+  li { display:flex; justify-content:space-between; padding:10px 16px; border-bottom:1px solid var(--line); font-family:'Consolas',monospace; font-size:14px; }
+  li:last-child { border-bottom:none; }
+  li span:first-child { color:var(--muted); width:70px; }
+  li.best { color:var(--go); } li.worst { color:var(--stop); }
+  @media (prefers-reduced-motion: reduce) { .planet-bands, .flame { animation:none; } }
+</style>
+</head>
+<body>
+<canvas id="space"></canvas>
+<main>
+  <h1>스탑워치</h1>
+  <div class="status" id="status">발사 대기</div>
+
+  <div class="dial">
+    <svg viewBox="0 0 400 400">
+      <defs>
+        <radialGradient id="planet" cx="35%" cy="30%" r="80%">
+          <stop offset="0" stop-color="#6d5bd0"/><stop offset=".55" stop-color="#2a2273"/><stop offset="1" stop-color="#0a0a26"/>
+        </radialGradient>
+        <radialGradient id="atmo" cx="50%" cy="50%" r="50%">
+          <stop offset=".82" stop-color="rgba(103,232,249,0)"/><stop offset=".93" stop-color="rgba(103,232,249,.35)"/><stop offset="1" stop-color="rgba(103,232,249,0)"/>
+        </radialGradient>
+        <linearGradient id="trail" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#a78bfa"/><stop offset="1" stop-color="#67e8f9"/>
+        </linearGradient>
+        <clipPath id="pclip"><circle cx="200" cy="200" r="108"/></clipPath>
+        <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+
+      <!-- 행성 -->
+      <circle cx="200" cy="200" r="126" fill="url(#atmo)"/>
+      <circle cx="200" cy="200" r="108" fill="url(#planet)"/>
+      <g clip-path="url(#pclip)">
+        <g class="planet-bands" opacity=".35">
+          <ellipse cx="200" cy="160" rx="170" ry="9" fill="#a78bfa"/>
+          <ellipse cx="200" cy="205" rx="170" ry="14" fill="#38bdf8"/>
+          <ellipse cx="200" cy="245" rx="170" ry="8" fill="#c084fc"/>
+          <ellipse cx="150" cy="120" rx="30" ry="6" fill="#fff" opacity=".4"/>
+        </g>
+        <circle cx="200" cy="200" r="108" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="40"/>
+      </g>
+
+      <!-- 궤도 눈금 -->
+      <g id="ticks"></g>
+      <circle cx="200" cy="200" r="170" fill="none" stroke="rgba(150,160,255,.2)" stroke-width="1.5"/>
+      <circle cx="200" cy="200" r="140" fill="none" stroke="rgba(150,160,255,.12)" stroke-width="1" stroke-dasharray="2 6"/>
+
+      <!-- 초 궤적 -->
+      <circle id="arc" cx="200" cy="200" r="170" fill="none" stroke="url(#trail)" stroke-width="4" stroke-linecap="round"
+              transform="rotate(-90 200 200)" stroke-dasharray="1068" stroke-dashoffset="1068" filter="url(#glow)"/>
+
+      <!-- 위성(초) -->
+      <g id="sat" filter="url(#glow)">
+        <circle r="11" fill="#fbbf24"/>
+        <circle r="11" fill="none" stroke="#fff3c4" stroke-width="1.5"/>
+        <ellipse rx="19" ry="5" fill="none" stroke="#fde68a" stroke-width="1.8" transform="rotate(-25)"/>
+      </g>
+      <!-- 달(1/100초) -->
+      <circle id="moon" r="5" fill="#e0f2fe" filter="url(#glow)"/>
+    </svg>
+    <div class="readout">
+      <div class="time" id="time">00:00<small>.00</small></div>
+      <div class="orbits" id="orbits">궤도 0회</div>
+    </div>
+  </div>
+
+  <div class="mission">
+    <div class="track">
+      <div class="fill" id="fill"></div>
+      <div class="labels"><span>지구</span><span>1분 = 달 도착</span><span>🌕</span></div>
+      <svg class="rocket" id="rocket" viewBox="0 0 38 24">
+        <g class="flame"><path d="M12 12 L0 6 L4 12 L0 18 Z" fill="#fb923c"/><path d="M12 12 L5 9 L7 12 L5 15 Z" fill="#fde047"/></g>
+        <path d="M12 6 H26 Q36 12 26 18 H12 Z" fill="#f1f5f9"/>
+        <path d="M26 6 Q36 12 26 18 Q31 12 26 6Z" fill="#ef4444"/>
+        <path d="M14 6 L9 1 H17 L19 6Z M14 18 L9 23 H17 L19 18Z" fill="#6366f1"/>
+        <circle cx="21" cy="12" r="2.6" fill="#38bdf8" stroke="#475569" stroke-width="1"/>
+      </svg>
+    </div>
+  </div>
+
+  <div class="btns">
+    <button id="toggle">발사</button>
+    <button id="lap" disabled>랩</button>
+    <button id="reset" disabled>초기화</button>
+  </div>
+  <div class="hint">스페이스 = 발사/정지 · L = 랩 · R = 초기화</div>
+  <ol id="laps"></ol>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const NS = 'http://www.w3.org/2000/svg';
+
+  /* ---------- 눈금 ---------- */
+  const ticks = $('ticks');
+  for (let i = 0; i < 60; i++) {
+    const a = i * 6 * Math.PI / 180, big = i % 5 === 0;
+    const r1 = big ? 176 : 179, r2 = 186;
+    const l = document.createElementNS(NS, 'line');
+    l.setAttribute('x1', 200 + r1 * Math.sin(a)); l.setAttribute('y1', 200 - r1 * Math.cos(a));
+    l.setAttribute('x2', 200 + r2 * Math.sin(a)); l.setAttribute('y2', 200 - r2 * Math.cos(a));
+    l.setAttribute('stroke', big ? 'rgba(200,210,255,.7)' : 'rgba(150,160,255,.3)');
+    l.setAttribute('stroke-width', big ? 2 : 1);
+    ticks.appendChild(l);
+  }
+
+  /* ---------- 스톱워치 로직 ---------- */
+  let running = false, start = 0, elapsed = 0, raf = 0, laps = [];
+
+  function fmt(ms) {
+    const cs = Math.floor(ms / 10) % 100, s = Math.floor(ms / 1000) % 60, m = Math.floor(ms / 60000) % 60, h = Math.floor(ms / 3600000);
+    return { main: (h ? h + ':' : '') + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'), cs: String(cs).padStart(2, '0') };
+  }
+  const text = ms => { const f = fmt(ms); return `${f.main}.${f.cs}`; };
+
+  function render() {
+    const f = fmt(elapsed);
+    $('time').innerHTML = `${f.main}<small>.${f.cs}</small>`;
+    $('orbits').textContent = `궤도 ${Math.floor(elapsed / 60000)}회`;
+
+    const sec = (elapsed % 60000) / 60000;
+    const a = sec * 2 * Math.PI;
+    $('arc').setAttribute('stroke-dashoffset', 1068 * (1 - sec));
+    $('sat').setAttribute('transform', `translate(${200 + 170 * Math.sin(a)} ${200 - 170 * Math.cos(a)})`);
+
+    const b = ((elapsed % 1000) / 1000) * 2 * Math.PI;
+    $('moon').setAttribute('cx', 200 + 140 * Math.sin(b));
+    $('moon').setAttribute('cy', 200 - 140 * Math.cos(b));
+
+    const track = $('rocket').parentElement.clientWidth - 38;
+    $('rocket').style.left = (sec * track) + 'px';
+    $('fill').style.width = (sec * 100) + '%';
+  }
+  function tick() { elapsed = performance.now() - start; render(); raf = requestAnimationFrame(tick); }
+
+  function setState(on) {
+    running = on;
+    document.body.classList.toggle('running', on);
+  }
+  function toggle() {
+    if (running) {
+      cancelAnimationFrame(raf);
+      elapsed = performance.now() - start; render();
+      setState(false);
+      $('toggle').textContent = '재발사';
+      $('lap').disabled = true;
+      $('status').textContent = '궤도 정지';
+    } else {
+      start = performance.now() - elapsed;
+      raf = requestAnimationFrame(tick);
+      setState(true);
+      $('toggle').textContent = '정지';
+      $('lap').disabled = false; $('reset').disabled = false;
+      $('status').textContent = '항해 중';
+    }
+  }
+  function lap() {
+    if (!running) return;
+    const last = laps.length ? laps[laps.length - 1].total : 0;
+    laps.push({ total: elapsed, split: elapsed - last });
+    renderLaps();
+    shootingStar();
+  }
+  function renderLaps() {
+    const sp = laps.map(l => l.split), best = Math.min(...sp), worst = Math.max(...sp);
+    $('laps').innerHTML = laps.map((l, i) => {
+      const cls = laps.length > 1 ? (l.split === best ? 'best' : l.split === worst ? 'worst' : '') : '';
+      return `<li class="${cls}"><span>랩 ${i + 1}</span><span>${text(l.split)}</span><span>${text(l.total)}</span></li>`;
+    }).reverse().join('');
+  }
+  function reset() {
+    cancelAnimationFrame(raf);
+    setState(false); elapsed = 0; laps = [];
+    render(); $('laps').innerHTML = '';
+    $('toggle').textContent = '발사';
+    $('lap').disabled = true; $('reset').disabled = true;
+    $('status').textContent = '발사 대기';
+  }
+  $('toggle').onclick = toggle; $('lap').onclick = lap; $('reset').onclick = reset;
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (e.key.toLowerCase() === 'l') lap();
+    else if (e.key.toLowerCase() === 'r') reset();
+  });
+  window.addEventListener('resize', render);
+
+  /* ---------- 별 배경 (실행 중엔 워프 효과) ---------- */
+  const cv = $('space'), ctx = cv.getContext('2d');
+  let W, H, stars = [], shooters = [], speed = 0.15, dpr = 1, flash = 0;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.width = innerWidth * dpr; H = cv.height = innerHeight * dpr;
+    const n = Math.floor((innerWidth * innerHeight) / 4500);
+    stars = Array.from({ length: n }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      z: Math.random() * 0.9 + 0.1, p: Math.random() * 6.28,
+      c: ['#ffffff', '#cfe8ff', '#ffe9c4', '#e0d4ff'][Math.floor(Math.random() * 4)]
+    }));
+  }
+  resize(); addEventListener('resize', resize);
+
+  function shootingStar() {
+    const dirR = Math.random() < .5;                       // 진행 방향
+    const sx = dirR ? -80 * dpr : W + 80 * dpr;
+    const sy = H * (0.08 + Math.random() * 0.3);
+    const ang = (dirR ? 1 : -1) * (0.30 + Math.random() * 0.15);
+    const mk = (dx, dy, spd, r, len, decay) => ({
+      x: sx + dx * dpr, y: sy + dy * dpr,
+      vx: Math.cos(ang) * spd * dpr * (dirR ? 1 : -1) * (dirR ? 1 : 1),
+      vy: Math.abs(Math.sin(ang)) * spd * dpr, r: r * dpr, len: len * dpr, life: 1, decay
+    });
+    // 큰 본체 1개 + 작은 동반 유성 2개
+    shooters.push(mk(0, 0, 15, 4.5, 340, .0085));
+    shooters.push(mk(-60 * (dirR ? 1 : -1), 40, 12, 2.6, 200, .0095));
+    shooters.push(mk(-110 * (dirR ? 1 : -1), -30, 13, 2.2, 170, .010));
+    flash = 1;
+    const d = document.querySelector('.dial'); d.classList.remove('pulse'); void d.offsetWidth; d.classList.add('pulse');
+  }
+
+  let t0 = performance.now();
+  function frame(now) {
+    const dt = Math.min((now - t0) / 16.7, 3); t0 = now;
+    const target = reduce ? 0.1 : (running ? 3.2 : 0.15);
+    speed += (target - speed) * 0.04 * dt;
+
+    ctx.clearRect(0, 0, W, H);
+    for (const s of stars) {
+      s.y += speed * s.z * 1.2 * dpr * dt;
+      if (s.y > H + 20) { s.y = -20; s.x = Math.random() * W; }
+      const tw = .6 + .4 * Math.sin(now / 600 + s.p);
+      ctx.globalAlpha = tw * (.35 + s.z * .65);
+      ctx.fillStyle = s.c; ctx.strokeStyle = s.c;
+      const size = (s.z * 1.5 + .3) * dpr;
+      const len = speed * s.z * 5 * dpr;
+      if (len > 2.5 * dpr) { ctx.lineWidth = size; ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x, s.y - len); ctx.stroke(); }
+      else { ctx.beginPath(); ctx.arc(s.x, s.y, size, 0, 6.28); ctx.fill(); }
+    }
+    ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.lineCap = 'round';
+    for (let i = shooters.length - 1; i >= 0; i--) {
+      const m = shooters[i];
+      m.x += m.vx * dt; m.y += m.vy * dt; m.life -= m.decay * dt;
+      if (m.life <= 0 || m.x < -400 * dpr || m.x > W + 400 * dpr || m.y > H + 200 * dpr) { shooters.splice(i, 1); continue; }
+      const al = Math.min(1, m.life * 2.2), sp = Math.hypot(m.vx, m.vy);
+      const tx = m.x - (m.vx / sp) * m.len, ty = m.y - (m.vy / sp) * m.len;
+      const g = ctx.createLinearGradient(m.x, m.y, tx, ty);
+      g.addColorStop(0, `rgba(255,255,255,${al})`); g.addColorStop(.25, `rgba(150,235,255,${al * .65})`);
+      g.addColorStop(.7, `rgba(167,139,250,${al * .25})`); g.addColorStop(1, 'rgba(167,139,250,0)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = m.r * 3.2; ctx.globalAlpha = .35; ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(tx, ty); ctx.stroke();  // 바깥 광채
+      ctx.lineWidth = m.r * 1.2; ctx.globalAlpha = 1;  ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(tx, ty); ctx.stroke();  // 코어
+      const hg = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r * 6);
+      hg.addColorStop(0, `rgba(255,255,255,${al})`); hg.addColorStop(.3, `rgba(150,235,255,${al * .6})`); hg.addColorStop(1, 'rgba(150,235,255,0)');
+      ctx.fillStyle = hg; ctx.beginPath(); ctx.arc(m.x, m.y, m.r * 6, 0, 6.28); ctx.fill();
+    }
+    ctx.restore();
+    if (flash > 0.01) {  // 랩 순간 화면 은은한 번쩍임
+      ctx.fillStyle = `rgba(150,200,255,${flash * 0.10})`; ctx.fillRect(0, 0, W, H); flash *= 0.9;
+    }
+    ctx.globalAlpha = 1;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  render();
+</script>
+</body>
+</html>
